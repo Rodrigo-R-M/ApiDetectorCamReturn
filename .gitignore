@@ -1,14 +1,19 @@
 # Entorno virtual
+.venv/
 venv/
+
+# Archivos de base de datos
+*.db
+users.db
+
+# Archivos de entorno real
 .env
 
-# PyCharm
-.idea/
-
-# Python
+# Archivos temporales
 __pycache__/
 *.pyc
-.DS_Store
-
-# Logs y temporales
 *.log
+
+# Sistema
+.DS_Store
+Thumbs.db
