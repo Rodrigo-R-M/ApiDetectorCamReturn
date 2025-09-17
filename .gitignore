@@ -1,0 +1,14 @@
+# Entorno virtual
+venv/
+.env
+
+# PyCharm
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.DS_Store
+
+# Logs y temporales
+*.log
