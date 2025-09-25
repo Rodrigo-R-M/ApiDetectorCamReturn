@@ -61,7 +61,7 @@ class CamaraEstadoRequest(BaseModel):
     estado: bool
     ip: str = None
     puerto: str = None
-
+    url_publica: str = None
 @app.post("/register")
 def register(request: RegisterRequest, db: Session = Depends(get_db)):
     logger.info("📌 Entrando a /register")
@@ -126,7 +126,8 @@ def check_auth(current_user: User = Depends(get_current_user), db: Session = Dep
         "tipo": current_user.tipo,
         "camara_activa": current_user.servidor_camara,
         "camara_ip": current_user.camara_ip,
-        "camara_puerto": current_user.camara_puerto
+        "camara_puerto": current_user.camara_puerto,
+        "url_publica": current_user.url_publica  # ← Añade esta línea
     }
 
     # Si el usuario es CLIENTE, buscar un servidor conectado
@@ -155,6 +156,7 @@ def actualizar_estado_camara(data: CamaraEstadoRequest, current_user: User = Dep
     current_user.servidor_camara = data.estado
     current_user.camara_ip = data.ip if data.estado else None
     current_user.camara_puerto = data.puerto if data.estado else None
+    current_user.url_publica = data.url_publica if data.estado else None
     db.commit()
     return {"estado": current_user.servidor_camara}
 

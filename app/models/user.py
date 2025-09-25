@@ -14,3 +14,4 @@ class User(Base):
     servidor_camara = Column(Boolean, default=False)
     camara_ip = Column(String(45), nullable=True)          # IPv6: hasta 45 caracteres
     camara_puerto = Column(String(5), nullable=True)       # puertos: 0-65535 → 5 dígitos máx.
+    url_publica = Column(String(255), nullable=True)
