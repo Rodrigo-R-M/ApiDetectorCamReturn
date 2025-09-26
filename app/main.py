@@ -32,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Crear tablas (solo desarrollo)
+# Crear tablas (solo desarrollo):]
 try:
     User.metadata.create_all(bind=engine)
     logger.info("✅ Tablas creadas correctamente")
