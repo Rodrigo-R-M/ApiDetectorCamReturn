@@ -62,6 +62,7 @@ class CamaraEstadoRequest(BaseModel):
     ip: str = None
     puerto: str = None
     url_publica: str = None
+
 @app.post("/register")
 def register(request: RegisterRequest, db: Session = Depends(get_db)):
     logger.info("📌 Entrando a /register")
@@ -99,6 +100,7 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)):
         logger.error(f"💥 ERROR en /register: {e}")
         logger.error("Traceback:", exc_info=True)
         raise
+
 @app.post("/login")
 def login(request_data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.username == request_data.username).first()
@@ -127,7 +129,7 @@ def check_auth(current_user: User = Depends(get_current_user), db: Session = Dep
         "camara_activa": current_user.servidor_camara,
         "camara_ip": current_user.camara_ip,
         "camara_puerto": current_user.camara_puerto,
-        "url_publica": current_user.url_publica
+        "url_publica": current_user.url_publica  # ← Añade esta línea
     }
 
     # Si el usuario es CLIENTE, buscar un servidor conectado
@@ -142,11 +144,9 @@ def check_auth(current_user: User = Depends(get_current_user), db: Session = Dep
         if servidor_activo:
             response["ip_servidor"] = servidor_activo.camara_ip
             response["puerto_servidor"] = servidor_activo.camara_puerto
-            response["url_publica"] = servidor_activo.url_publica
         else:
             response["ip_servidor"] = None
             response["puerto_servidor"] = None
-            response["url_publica"] = None
 
     return response
 
