@@ -127,7 +127,7 @@ def check_auth(current_user: User = Depends(get_current_user), db: Session = Dep
         "camara_activa": current_user.servidor_camara,
         "camara_ip": current_user.camara_ip,
         "camara_puerto": current_user.camara_puerto,
-        "url_publica": current_user.url_publica  # ← Añade esta línea
+        "url_publica": current_user.url_publica
     }
 
     # Si el usuario es CLIENTE, buscar un servidor conectado
@@ -142,9 +142,11 @@ def check_auth(current_user: User = Depends(get_current_user), db: Session = Dep
         if servidor_activo:
             response["ip_servidor"] = servidor_activo.camara_ip
             response["puerto_servidor"] = servidor_activo.camara_puerto
+            response["url_publica"] = servidor_activo.url_publica  # ✅ ¡AÑADE ESTA LÍNEA!
         else:
             response["ip_servidor"] = None
             response["puerto_servidor"] = None
+            response["url_publica"] = None  # ✅ ¡Y ESTA LÍNEA!
 
     return response
 
