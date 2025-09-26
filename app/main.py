@@ -144,9 +144,13 @@ def check_auth(current_user: User = Depends(get_current_user), db: Session = Dep
         if servidor_activo:
             response["ip_servidor"] = servidor_activo.camara_ip
             response["puerto_servidor"] = servidor_activo.camara_puerto
+            response["url_publica_servidor"] = servidor_activo.url_publica
+            response["servidor_usuario"] = servidor_activo.username
         else:
             response["ip_servidor"] = None
             response["puerto_servidor"] = None
+            response["url_publica_servidor"] = None
+            response["servidor_usuario"] = None
 
     return response
 
