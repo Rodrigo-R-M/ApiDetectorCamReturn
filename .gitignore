@@ -9,6 +9,11 @@ users.db
 # Archivos de entorno real
 .env
 
+# Credenciales de Firebase (SECRETO - nunca subir)
+firebase-service-account.json
+*serviceaccount*.json
+*-firebase-adminsdk-*.json
+
 # Archivos temporales
 __pycache__/
 *.pyc
@@ -17,3 +22,6 @@ __pycache__/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# IDE
+.idea/

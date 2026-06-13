@@ -3,9 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware  # <-- ¡IMPORTANTE!
 from sqlalchemy.orm import Session
 from passlib.hash import bcrypt
+from sqlalchemy import text
 from app.database import SessionLocal, engine
 from app.models.user import User
+from app.push import init_firebase, enviar_push
 from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
 import logging
 import os
 from dotenv import load_dotenv
@@ -21,7 +25,15 @@ app = FastAPI()
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback_inseguro_solo_dev")
 
 # ✅ Agregar SessionMiddleware ANTES de otros middlewares (recomendado)
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+# max_age: la sesión expira a los 14 días en vez de ser eterna.
+# https_only: la cookie solo viaja por HTTPS (Render sirve HTTPS).
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    max_age=14 * 24 * 60 * 60,  # 14 días
+    https_only=True,
+    same_site="lax",
+)
 
 # Luego el CORS
 app.add_middleware(
@@ -39,6 +51,33 @@ try:
 except Exception as e:
     logger.error(f"❌ Error al crear tablas: {e}")
     raise
+
+
+def _asegurar_columnas():
+    """Migración ligera: añade columnas nuevas si la tabla ya existía.
+
+    create_all() no altera tablas existentes, así que añadimos a mano las
+    columnas de notificaciones. Si ya existen, el ALTER falla y se ignora.
+    Funciona tanto en SQLite (local) como en PostgreSQL (Render).
+    """
+    columnas = {
+        "fcm_token": "VARCHAR(255)",
+        "ultima_alerta": "VARCHAR(64)",
+    }
+    for nombre, tipo in columnas.items():
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {nombre} {tipo}"))
+            logger.info(f"🔧 Columna '{nombre}' añadida")
+        except Exception:
+            pass  # la columna ya existe
+
+
+_asegurar_columnas()
+
+# Inicializar Firebase (si hay credenciales). Si no, los push quedan desactivados
+# pero la API sigue funcionando con normalidad.
+init_firebase()
 
 def get_db():
     db = SessionLocal()
@@ -59,47 +98,58 @@ class LoginRequest(BaseModel):
 
 class CamaraEstadoRequest(BaseModel):
     estado: bool
-    ip: str = None
-    puerto: str = None
-    url_publica: str = None
+    # Optional[...] para que un null explícito (que envían algunos clientes)
+    # no provoque un error 422 en Pydantic v2.
+    ip: Optional[str] = None
+    puerto: Optional[str] = None
+    url_publica: Optional[str] = None
+
+class TokenRequest(BaseModel):
+    token: str
+
+class AlertaRequest(BaseModel):
+    camara: int = 0
+
+TIPOS_VALIDOS = {"cliente", "server"}
+
 
 @app.post("/register")
 def register(request: RegisterRequest, db: Session = Depends(get_db)):
-    logger.info("📌 Entrando a /register")
-    logger.info(f"📌 Datos recibidos: {request.dict()}")
+    # NO registrar el cuerpo completo: contiene la contraseña en texto plano.
+    logger.info(f"📌 /register usuario={request.username} tipo={request.tipo}")
+
+    if request.tipo not in TIPOS_VALIDOS:
+        raise HTTPException(status_code=400, detail="Tipo de usuario no válido")
 
     try:
-        logger.info("🔍 Verificando si el usuario ya existe...")
         if db.query(User).filter(User.username == request.username).first():
             logger.warning("⚠️ Usuario ya registrado")
             raise HTTPException(status_code=400, detail="Usuario ya registrado")
 
-        logger.info("🔍 Verificando si el correo ya existe...")
         if db.query(User).filter(User.email == request.email).first():
             logger.warning("⚠️ Correo ya registrado")
             raise HTTPException(status_code=400, detail="Correo ya registrado")
 
-        logger.info("🆕 Creando nuevo usuario...")
         new_user = User(
             username=request.username,
             email=request.email,
             hashed_password=bcrypt.hash(request.password),
             tipo=request.tipo
         )
-
-        logger.info("💾 Añadiendo usuario a la sesión...")
         db.add(new_user)
-
-        logger.info("✅ Haciendo commit...")
         db.commit()
 
         logger.info("🎉 Registro exitoso")
         return {"message": "Registro exitoso"}
 
-    except Exception as e:
-        logger.error(f"💥 ERROR en /register: {e}")
-        logger.error("Traceback:", exc_info=True)
+    except HTTPException:
+        # Errores esperados (usuario/correo duplicado, tipo inválido): re-lanzar tal cual.
         raise
+    except Exception as e:
+        # Error real de BD u otro: deshacer la transacción y devolver 500 limpio.
+        db.rollback()
+        logger.error(f"💥 ERROR en /register: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error interno al registrar")
 
 @app.post("/login")
 def login(request_data: LoginRequest, request: Request, db: Session = Depends(get_db)):
@@ -176,6 +226,52 @@ def logout(request: Request, db: Session = Depends(get_db)):
             db.commit()
     request.session.clear()
     return {"message": "Sesión cerrada"}
+
+@app.post("/registrar-token")
+def registrar_token(data: TokenRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """La app móvil registra aquí su token de Firebase (FCM) tras iniciar sesión."""
+    current_user.fcm_token = data.token
+    db.commit()
+    logger.info(f"📲 Token FCM registrado para {current_user.username}")
+    return {"ok": True}
+
+
+@app.post("/alerta")
+def alerta(data: AlertaRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """El servidor de cámara avisa de que ha detectado una persona.
+
+    Se notifica por push al cliente emparejado (mismo nombre base sin '_server').
+    """
+    if current_user.tipo != "server":
+        raise HTTPException(status_code=403, detail="Solo un servidor puede enviar alertas")
+
+    # Cliente emparejado: 'rodri_server' -> 'rodri'
+    nombre_base = current_user.username
+    if nombre_base.endswith("_server"):
+        nombre_base = nombre_base[: -len("_server")]
+
+    cliente = db.query(User).filter(
+        User.username == nombre_base,
+        User.tipo == "cliente"
+    ).first()
+
+    # Guardar marca de tiempo de la última alerta en el servidor
+    current_user.ultima_alerta = datetime.utcnow().isoformat()
+    db.commit()
+
+    push_enviado = False
+    if cliente and cliente.fcm_token:
+        push_enviado = enviar_push(
+            cliente.fcm_token,
+            "DetectorCam",
+            "🚨 Se ha detectado una persona en tu cámara",
+            {"tipo": "persona_detectada", "camara": data.camara},
+        )
+    else:
+        logger.warning(f"Sin token FCM para el cliente '{nombre_base}'; no se envía push")
+
+    return {"ok": True, "push_enviado": push_enviado}
+
 
 @app.get("/ping")
 def ping():
